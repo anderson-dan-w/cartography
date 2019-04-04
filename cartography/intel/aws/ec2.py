@@ -78,7 +78,8 @@ def load_ec2_instances(session, data, region, current_aws_account_id, aws_update
     SET instance.publicdnsname = {PublicDnsName}, instance.privateipaddress = {PrivateIpAddress},
     instance.imageid = {ImageId}, instance.instancetype = {InstanceType}, instance.monitoringstate = {MonitoringState},
     instance.state = {State}, instance.launchtime = {LaunchTime}, instance.launchtimeunix = {LaunchTimeUnix},
-    instance.region = {Region}, instance.lastupdated = {aws_update_tag}
+    instance.region = {Region}, instance.lastupdated = {aws_update_tag},
+    instance.name = {Name}
     WITH instance
     MERGE (subnet:EC2Subnet{subnetid: {SubnetId}})
     ON CREATE SET subnet.firstseen = timestamp()
@@ -141,6 +142,12 @@ def load_ec2_instances(session, data, region, current_aws_account_id, aws_update
             else:
                 launch_time_unix = ""
 
+            name = ""
+            tags = instance.get("Tags")
+            for tag in instance.get("Tags", []):
+                if tag["Key"] == "Name":
+                    name = tag["Value"]
+
             session.run(
                 ingest_instance,
                 InstanceId=instanceid,
@@ -155,6 +162,7 @@ def load_ec2_instances(session, data, region, current_aws_account_id, aws_update
                 LaunchTime=str(launch_time),
                 LaunchTimeUnix=launch_time_unix,
                 State=instance_state,
+                Name=name,
                 AWS_ACCOUNT_ID=current_aws_account_id,
                 Region=region,
                 aws_update_tag=aws_update_tag
