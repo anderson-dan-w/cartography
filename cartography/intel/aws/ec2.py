@@ -153,7 +153,6 @@ def load_ec2_instances(session, data, region, current_aws_account_id, aws_update
                 launch_time_unix = ""
 
             name = ""
-            tags = instance.get("Tags")
             for tag in instance.get("Tags", []):
                 if tag["Key"] == "Name":
                     name = tag["Value"]
