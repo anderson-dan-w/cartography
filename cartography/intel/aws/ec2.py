@@ -115,6 +115,16 @@ def load_ec2_instances(session, data, region, current_aws_account_id, aws_update
     SET r.lastupdated = {aws_update_tag}
     """
 
+    ingest_ec2_tag = """
+    MERGE (tag:EC2Tag{name: {Name}})
+    ON CREATE SET tag.name ={Name}
+    WITH tag
+    MATCH (instance:EC2Instance{instanceid: {InstanceId}})
+    MERGE (instance)-[r:RESOURCE]->(tag)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = {aws_update_tag}
+    """
+
     for reservation in data['Reservations']:
         reservation_id = reservation["ReservationId"]
 
@@ -178,6 +188,15 @@ def load_ec2_instances(session, data, region, current_aws_account_id, aws_update
                         Region=region,
                         AWS_ACCOUNT_ID=current_aws_account_id,
                         aws_update_tag=aws_update_tag
+                    )
+
+            if instance.get("Tags"):
+                for tag in instance["Tags"]:
+                    session.run(
+                        ingest_ec2_tag,
+                        Name=tag["Value"],
+                        InstanceId=instanceid,
+                        aws_update_tag=aws_update_tag,
                     )
 
             load_ec2_instance_network_interfaces(session, instance, aws_update_tag)
