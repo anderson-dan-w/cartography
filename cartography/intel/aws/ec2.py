@@ -287,14 +287,26 @@ def load_ec2_security_groupinfo(session, data, region, current_aws_account_id, a
 def load_ec2_security_group_rule(session, group, rule_type, aws_update_tag):
     ingest_rule = """
     MERGE (rule:#RULE_TYPE#{ruleid: {RuleId}})
-    ON CREATE SET rule :IpRule, rule.firstseen = timestamp(), rule.fromport = {FromPort}, rule.toport = {ToPort},
+    ON CREATE SET rule :IpRule, rule.firstseen = timestamp()
+    SET rule.fromport = {FromPort}, rule.toport = {ToPort},
     rule.protocol = {Protocol}
     SET rule.lastupdated = {aws_update_tag}
     WITH rule
     MATCH (group:EC2SecurityGroup{groupid: {GroupId}})
     MERGE (group)<-[r:MEMBER_OF_EC2_SECURITY_GROUP]-(rule)
     ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = {aws_update_tag};
+    SET r.lastupdated = {aws_update_tag}
+    """
+
+    ingest_rule_security_group = """
+    MERGE (isg:EC2SecurityGroup{id: {InnerGroupId}})
+    ON CREATE SET isg.firstseen = timestamp()
+    SET isg.lastupdated = {aws_update_tag}
+    WITH isg
+    MATCH (sg:EC2SecurityGroup{id: {GroupId}})
+    MERGE (sg)-[h:HAS_INNER_GROUP]->(isg)
+    ON CREATE SET h.firstseen = timestamp()
+    SET h.lastupdated = {aws_update_tag}
     """
 
     ingest_rule_group_pair = """
@@ -329,6 +341,7 @@ def load_ec2_security_group_rule(session, group, rule_type, aws_update_tag):
             to_port = rule.get("ToPort", "")
 
             ruleid = "{0}/{1}/{2}{3}{4}".format(group_id, rule_type, from_port, to_port, protocol)
+
             # NOTE Cypher query syntax is incompatible with Python string formatting, so we have to do this awkward
             # NOTE manual formatting instead.
             session.run(
@@ -340,6 +353,17 @@ def load_ec2_security_group_rule(session, group, rule_type, aws_update_tag):
                 GroupId=group_id,
                 aws_update_tag=aws_update_tag
             )
+
+            for inner_group in rule.get("UserIdGroupPairs", []):
+                inner_group_id = inner_group["GroupId"]
+                if not inner_group_id or inner_group_id == group_id:
+                  continue
+                session.run(
+                    ingest_rule_security_group,
+                    GroupId=group_id,
+                    InnerGroupId=inner_group_id,
+                    aws_update_tag=aws_update_tag,
+                )
 
             session.run(
                 ingest_rule_group_pair,
