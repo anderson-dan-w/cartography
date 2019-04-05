@@ -52,12 +52,18 @@ def load_rds_instances(neo4j_session, data, region, current_aws_account_id, aws_
     rds.endpoint_address = {EndpointAddress},
     rds.endpoint_hostedzoneid = {EndpointHostedZoneId},
     rds.endpoint_port = {EndpointPort},
+    rds.vpc_id= {VpcId},
     rds.lastupdated = {aws_update_tag}
     WITH rds
     MATCH (aa:AWSAccount{id: {AWS_ACCOUNT_ID}})
     MERGE (aa)-[r:RESOURCE]->(rds)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = {aws_update_tag}
+    WITH rds
+    MATCH (vpc:VPC{id: {VpcId}})
+    MERGE (rds)-[v:IN_VPC]->(vpc)
+    ON CREATE SET v.firstseen = timestamp()
+    SET v.lastupdated = {aws_update_tag}
     """
     read_replicas = []
 
@@ -70,6 +76,14 @@ def load_rds_instances(neo4j_session, data, region, current_aws_account_id, aws_
         # Keep track of instances that are read replicas so we can attach them to their source instances later
         if rds.get("ReadReplicaSourceDBInstanceIdentifier"):
             read_replicas.append(rds)
+
+        # NOTE(dan): does MATCH VPC only work because this happens _after_ ec2 load?
+        #   and would I otherwise need to ON CREATE SET vpc info?
+        vpc_id = ""
+        try:
+          vpc_id = rds['DBSubnetGroup']['VpcId']
+        except KeyError:
+          pass
 
         neo4j_session.run(
             ingest_rds_instance,
@@ -102,6 +116,7 @@ def load_rds_instances(neo4j_session, data, region, current_aws_account_id, aws_
             EndpointHostedZoneId=ep.get('HostedZoneId'),
             EndpointPort=ep.get('Port'),
             Region=region,
+            VpcId=vpc_id,
             AWS_ACCOUNT_ID=current_aws_account_id,
             aws_update_tag=aws_update_tag
         )

@@ -32,6 +32,11 @@ def get_ec2_security_group_data(session, region):
     return {'SecurityGroups': security_groups}
 
 
+def get_vpc_data(session, region):
+    client = session.client('ec2', region_name=region, config=_get_botocore_config())
+    return client.describe_vpcs()['Vpcs']
+
+
 def get_ec2_instances(session, region):
     client = session.client('ec2', region_name=region, config=_get_botocore_config())
     paginator = client.get_paginator('describe_instances')
@@ -97,6 +102,11 @@ def load_ec2_instances(session, data, region, current_aws_account_id, aws_update
     MERGE (aa)-[r:RESOURCE]->(instance)
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = {aws_update_tag}
+    WITH instance
+    MATCH (vpc:VPC{id: {VpcId}})
+    MERGE (instance)-[v:IN_VPC]->(vpc)
+    ON CREATE SET v.firstseen = timestamp()
+    SET v.lastupdated = {aws_update_tag}
     """
 
     ingest_security_groups = """
@@ -172,6 +182,7 @@ def load_ec2_instances(session, data, region, current_aws_account_id, aws_update
                 LaunchTimeUnix=launch_time_unix,
                 State=instance_state,
                 Name=name,
+                VpcId=instance.get("VpcId", ""),
                 AWS_ACCOUNT_ID=current_aws_account_id,
                 Region=region,
                 aws_update_tag=aws_update_tag
@@ -252,6 +263,28 @@ def load_ec2_instance_network_interfaces(session, instance_data, aws_update_tag)
                 GroupId=group["GroupId"],
                 aws_update_tag=aws_update_tag
             )
+
+
+def load_vpc_info(session, data, region, current_aws_account_id, aws_update_tag):
+  ingest_vpc = """
+  MERGE (vpc:VPC{id: {VpcId}})
+  ON CREATE SET vpc.firstseen = timestamp()
+  SET vpc.is_default = {VpcIsDefault}, vpc.name = {VpcName},
+  vpc.lastupdated = {aws_update_tag}
+  """
+
+  for vpc in data:
+    name = '-'
+    for tag in vpc.get('Tags', []):
+      if tag.get('Key') == 'Name':
+        name = tag.get('Value', name)
+    session.run(
+      ingest_vpc,
+      VpcId=vpc['VpcId'],
+      VpcIsDefault=vpc['IsDefault'],
+      VpcName=name,
+      aws_update_tag=aws_update_tag,
+    )
 
 
 def load_ec2_security_groupinfo(session, data, region, current_aws_account_id, aws_update_tag):
@@ -622,6 +655,18 @@ def cleanup_ec2_auto_scaling_groups(session, common_job_parameters):
 
 def cleanup_load_balancers(session, common_job_parameters):
     run_cleanup_job('aws_ingest_load_balancers_cleanup.json', session, common_job_parameters)
+
+
+def cleanup_vpcs(session, common_job_parameters):
+  logger.debug("{0}\nskipping VPC cleanup, dan did not implement it\n{0}".format("*"*80))
+
+
+def sync_vpcs(session, boto3_session, regions, current_aws_account_id, aws_update_tag, common_job_parameters):
+  for region in regions:
+    logger.debug(f"Syncing VPCs for region {region} for account {current_aws_account_id}")
+    data = get_vpc_data(boto3_session, region)
+    load_vpc_info(session, data, region, current_aws_account_id, aws_update_tag)
+  cleanup_vpcs(session, common_job_parameters)
 
 
 def sync_ec2_security_groupinfo(session, boto3_session, regions, current_aws_account_id, aws_update_tag,
